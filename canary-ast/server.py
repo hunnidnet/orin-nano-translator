@@ -1,75 +1,71 @@
 import os, io, time
+os.environ.setdefault("TRANSFORMERS_NO_TORCHVISION", "1")
 import numpy as np
 import soundfile as sf
 from fastapi import FastAPI, Body
 from pydantic import BaseModel
 import torch
-os.environ.setdefault("TRANSFORMERS_NO_TORCHVISION", "1")
+import json
 
-# Try to load Canary AST; fallback to Whisper translate pipeline for first-run sanity.
-USE_FALLBACK = False
-MODEL_ID = os.getenv("CANARY_MODEL_ID", "").strip()
+app = FastAPI()
 
-processor = None
-model = None
-pipe = None
+MODEL_ID = os.getenv("CANARY_MODEL_ID")  # e.g., "nvidia/canary-1b-v2"
+asr_translate = None
+fw_model = None  # faster-whisper fallback
 
-app = FastAPI(title="Canary AST Server", version="0.1")
+def load_model():
+    global asr_translate, fw_model
+    if MODEL_ID:
+        # Canary/HF pipeline (no torchvision)
+        from transformers import pipeline
+        asr_translate = pipeline(
+            task="automatic-speech-recognition",
+            model=MODEL_ID,
+            torch_dtype="float32",  # Jetson-friendly; can change to "float16" later
+        )
+        return
+
+    # Fallback: faster-whisper translate (no transformers / no torchvision)
+    from faster_whisper import WhisperModel
+    # small-medium balances speed/accuracy; adjust per your taste
+    fw_model = WhisperModel("small", device="cpu", compute_type="int8")
+    # or try: WhisperModel("medium", device="cuda", compute_type="float16") once CUDA works
 
 @app.on_event("startup")
-def load_model():
-    global processor, model, pipe, USE_FALLBACK
-    try:
-        if MODEL_ID:
-            from transformers import AutoProcessor, AutoModelForSeq2SeqLM
-            processor = AutoProcessor.from_pretrained(MODEL_ID)
-            model = AutoModelForSeq2SeqLM.from_pretrained(
-                MODEL_ID,
-                torch_dtype=torch.float16
-            ).cuda().eval()
-            print(f"Loaded Canary model: {MODEL_ID}")
-            USE_FALLBACK = False
-        else:
-            raise RuntimeError("No CANARY_MODEL_ID set")
-    except Exception as e:
-        print(f"[WARN] Canary model not set/available: {e}")
-        print("[INFO] Falling back to Whisper translate pipeline for smoke test.")
-        from transformers import pipeline
-        # This fallback translates speech to English; we will naïvely switch langs via 'task'
-        pipe = pipeline(
-            "automatic-speech-recognition",
-            model="openai/whisper-small",
-            device=0 if torch.cuda.is_available() else -1,
-            generate_kwargs={"task": "translate"},
-        )
-        USE_FALLBACK = True
+def _startup():
+    load_model()
 
-class AstRequest(BaseModel):
-    # 16-bit little-endian PCM mono at 16k; send as hex string to avoid JSON b64 hassle
+class AstIn(BaseModel):
     pcm16_hex: str
-    sr: int = 16000
-    src_lang: str  # "es" or "en"
-    tgt_lang: str  # "en" or "es"
+    sr: int
+    src_lang: str
+    tgt_lang: str
 
 @app.post("/ast")
-def ast(req: AstRequest):
-    # decode PCM
-    pcm_bytes = bytes.fromhex(req.pcm16_hex)
-    audio = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+def ast(inb: AstIn):
+    import numpy as np
+    pcm = bytes.fromhex(inb.pcm16_hex) if inb.pcm16_hex else b""
+    if not pcm:
+        return {"translation": ""}
 
-    if len(audio) == 0:
-        return {"translation": "", "timestamp": time.time()}
+    # int16 mono -> float32
+    import soundfile as sf
+    import io
+    # Write a fake WAV header in-memory so libs accept it easily
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(inb.sr)
+        w.writeframes(pcm)
+    buf.seek(0)
 
-    if USE_FALLBACK:
-        # Whisper translate always tends to English by default; for EN->ES we’ll first transcribe, then mark for client-side TTS in ES.
-        # Note: This is only for smoke tests until you set CANARY_MODEL_ID.
-        text = pipe({"raw": audio, "sampling_rate": req.sr})["text"]
-        # crude: if src==en and tgt==es, we just return the EN text; downstream will TTS in ES (not true translation). Replace with real Canary ASAP.
-        return {"translation": text, "timestamp": time.time(), "note": "fallback-whisper"}
-    else:
-        from transformers import AutoProcessor
-        inputs = processor(audio, sampling_rate=req.sr, src_lang=req.src_lang, tgt_lang=req.tgt_lang, return_tensors="pt").to("cuda")
-        with torch.inference_mode():
-            out = model.generate(**inputs, max_new_tokens=128)
-        text = processor.batch_decode(out, skip_special_tokens=True)[0]
-        return {"translation": text, "timestamp": time.time()}
+    if asr_translate:
+        # HF pipeline (e.g., Canary multilingual)
+        out = asr_translate(buf, generate_kwargs={"task": "translate"})
+        text = out.get("text", "")
+        return {"translation": text}
+
+    # faster-whisper fallback with task="translate"
+    segments, info = fw_model.transcribe(buf, task="translate", language=None)  # auto-detect
+    text = " ".join(seg.text.strip() for seg in segments)
+    return {"translation": text}
