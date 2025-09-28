@@ -1,6 +1,6 @@
 # canary-ast/Dockerfile
 # Jetson-compatible PyTorch image (matches JetPack r36.x)
-FROM nvcr.io/nvidia/l4t-pytorch:r36.2.0-pth2.3-py3
+FROM nvcr.io/nvidia/l4t-ml:r36.4.4-py3
 
 # Avoid interactive tzdata prompts
 ENV DEBIAN_FRONTEND=noninteractive
