@@ -1,0 +1,12 @@
+# Ignore Riva quickstart and big model files
+riva/
+speechsynthesis_*/
+*.wav
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS / editor files
+.DS_Store
+*.swp

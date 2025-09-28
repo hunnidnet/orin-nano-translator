@@ -1,4 +1,4 @@
-import os, time, threading, queue, requests, struct
+import os, time, threading, queue, requests
 import numpy as np
 import webrtcvad
 import alsaaudio
@@ -7,30 +7,32 @@ import alsaaudio
 CANARY_URL = os.getenv("CANARY_URL", "http://127.0.0.1:7000/ast")
 RIVA_ADDR  = os.getenv("RIVA_ADDR", "127.0.0.1:50051")
 
-A_IN  = os.getenv("A_IN", "hw:2,0")
-A_OUT = os.getenv("A_OUT", "hw:2,0")
-B_IN  = os.getenv("B_IN", "hw:3,0")
-B_OUT = os.getenv("B_OUT", "hw:3,0")
+A_IN  = os.getenv("A_IN",  "headset0_in")
+A_OUT = os.getenv("A_OUT", "headset0_out")
+B_IN  = os.getenv("B_IN",  "headset1_in")
+B_OUT = os.getenv("B_OUT", "headset1_out")
 
 A_SRC = os.getenv("A_SRC", "es")
 A_TGT = os.getenv("A_TGT", "en")
 B_SRC = os.getenv("B_SRC", "en")
 B_TGT = os.getenv("B_TGT", "es")
 
-RIVA_VOICE_A = os.getenv("RIVA_VOICE_A", "en-US-Polyglot-1")
-RIVA_VOICE_B = os.getenv("RIVA_VOICE_B", "es-ES-Polyglot-1")
+# Set these via docker-compose to your confirmed names, e.g.
+# English-US.Female-1  /  Spanish-US.Female-1
+RIVA_VOICE_A = os.getenv("RIVA_VOICE_A", "English-US.Female-1")  # used when target is EN
+RIVA_VOICE_B = os.getenv("RIVA_VOICE_B", "Spanish-US.Female-1")  # used when target is ES (LatAm)
 
 SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", "16000"))
 FRAME_MS    = int(os.getenv("FRAME_MS", "20"))
 BURST_MIN   = int(os.getenv("BURST_MIN_MS", "300"))
 BURST_MAX   = int(os.getenv("BURST_MAX_MS", "600"))
-VAD_LEVEL   = int(os.getenv("VAD_LEVEL", "2")) # 0-3
+VAD_LEVEL   = int(os.getenv("VAD_LEVEL", "2"))  # 0-3
 
 CHANNELS = 1
 SAMPLE_BYTES = 2  # S16_LE
 
 # ---------- RIVA TTS CLIENT ----------
-# Try to import either package name.
+# Try to import the TTS client (several package layouts exist)
 TTSService = None
 try:
     from riva.client import TTSService as _TTSService
@@ -40,29 +42,31 @@ except Exception:
         from nvidia.riva.client import TTSService as _TTSService
         TTSService = _TTSService
     except Exception:
-        TTSService = None
+        try:
+            from riva.client.tts import TTSService as _TTSService
+            TTSService = _TTSService
+        except Exception:
+            TTSService = None
 
-def riva_synthesize(text: str, voice_name: str, sample_rate=SAMPLE_RATE) -> bytes:
+def riva_synthesize(text: str, voice_name: str, language_code: str, sample_rate=SAMPLE_RATE) -> bytes:
     """
     Returns PCM16 mono bytes from Riva TTS (blocking).
     """
     if TTSService is None:
-        # As a fallback, synthesize silence with short beep so pipeline stays alive
-        dur = max(0.2, min(3.0, len(text)/12.0))
-        t = np.linspace(0, dur, int(dur*sample_rate), endpoint=False)
-        beep = 0.05*np.sin(2*np.pi*440*t)
-        return (beep*32767).astype(np.int16).tobytes()
+        # Fallback beep so the pipeline stays alive if client import fails
+        dur = max(0.2, min(3.0, len(text) / 12.0))
+        t = np.linspace(0, dur, int(dur * sample_rate), endpoint=False)
+        beep = 0.05 * np.sin(2 * np.pi * 440 * t)
+        return (beep * 32767).astype(np.int16).tobytes()
 
     svc = TTSService(RIVA_ADDR)
-    # Depending on the client, the call signature names may vary slightly.
     audio = svc.synthesize(
         text=text,
-        language_code=None,  # voice implies language
+        language_code=language_code,   # MUST match voice family: "en-US" or "es-US"
         encoding="LINEAR_PCM",
         sample_rate_hz=sample_rate,
         voice_name=voice_name,
     )
-    # audio is bytes PCM16 mono
     return audio
 
 # ---------- ALSA HELPERS ----------
@@ -161,7 +165,9 @@ def direction_worker(name, in_dev, out_dev, src_lang, tgt_lang, riva_voice):
         try:
             text = canary_translate(burst, src_lang, tgt_lang)
             if text.strip():
-                pcm_tts = riva_synthesize(text, riva_voice, SAMPLE_RATE)
+                # Pick Riva language code by target
+                tgt_lang_code = "es-US" if tgt_lang.lower().startswith("es") else "en-US"
+                pcm_tts = riva_synthesize(text, riva_voice, tgt_lang_code, SAMPLE_RATE)
                 out_q.put(pcm_tts)
         except Exception as e:
             print(f"[{name}] error: {e}")
