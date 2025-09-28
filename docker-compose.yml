@@ -5,7 +5,7 @@ services:
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      # When you have a HF Canary model, set it here (keep commented for now):
+      - TRANSFORMERS_NO_TORCHVISION=1 
       # - CANARY_MODEL_ID=nvidia/canary-1b-v2
     ports:
       - "7000:7000"
