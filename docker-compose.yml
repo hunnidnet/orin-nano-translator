@@ -1,0 +1,56 @@
+version: "3.8"
+
+services:
+  canary:
+    build: ./canary-ast
+    container_name: canary-ast
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      # Set your Canary model id when you have it:
+      # - CANARY_MODEL_ID=nvidia/canary-1b-v2
+    ports:
+      - "7000:7000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+
+  riva-tts:
+    image: nvcr.io/nvidia/riva/riva-speech:2.14.0-server
+    container_name: riva-tts
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./riva/models:/data/models
+      - ./riva/config:/data/config
+    command: ["/opt/riva/bin/riva_server", "--start_asr=false", "--start_nlp=false", "--start_tts=true"]
+    ports:
+      - "50051:50051"
+
+  router:
+    build: ./router
+    container_name: translator-router
+    depends_on: [canary, riva-tts]
+    network_mode: "host"
+    devices:
+      - "/dev/snd:/dev/snd"
+    environment:
+      - CANARY_URL=http://127.0.0.1:7000/ast
+      - RIVA_ADDR=127.0.0.1:50051
+      - A_IN=hw:2,0
+      - A_OUT=hw:2,0
+      - B_IN=hw:3,0
+      - B_OUT=hw:3,0
+      - A_SRC=es
+      - A_TGT=en
+      - B_SRC=en
+      - B_TGT=es
+      - RIVA_VOICE_A=en-US-Polyglot-1   # pick actual Riva EN voice
+      - RIVA_VOICE_B=es-ES-Polyglot-1   # pick actual Riva ES voice
+      - FRAME_MS=20
+      - BURST_MIN_MS=300
+      - BURST_MAX_MS=600
+      - SAMPLE_RATE=16000
