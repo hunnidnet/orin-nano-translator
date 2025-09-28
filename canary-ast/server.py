@@ -4,6 +4,7 @@ import soundfile as sf
 from fastapi import FastAPI, Body
 from pydantic import BaseModel
 import torch
+os.environ.setdefault("TRANSFORMERS_NO_TORCHVISION", "1")
 
 # Try to load Canary AST; fallback to Whisper translate pipeline for first-run sanity.
 USE_FALLBACK = False
