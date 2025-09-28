@@ -5,8 +5,9 @@ services:
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      - TRANSFORMERS_NO_TORCHVISION=1 
-      # - CANARY_MODEL_ID=nvidia/canary-1b-v2
+      - TRANSFORMERS_NO_TORCHVISION=1     # keep this for safety
+      # Later, when you want real Canary AST instead of FW fallback:
+      - CANARY_MODEL_ID=nvidia/canary-1b-v2
     ports:
       - "7000:7000"
 
