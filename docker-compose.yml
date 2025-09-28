@@ -7,7 +7,7 @@ services:
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      # Set your Canary model id when you have it:
+      # If/when you have a HF Canary model:
       # - CANARY_MODEL_ID=nvidia/canary-1b-v2
     ports:
       - "7000:7000"
@@ -17,26 +17,15 @@ services:
           devices:
             - capabilities: [gpu]
 
-  riva-tts:
-    image: nvcr.io/nvidia/riva/riva-speech:2.14.0-server
-    container_name: riva-tts
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-    volumes:
-      - ./riva/models:/data/models
-      - ./riva/config:/data/config
-    command: ["/opt/riva/bin/riva_server", "--start_asr=false", "--start_nlp=false", "--start_tts=true"]
-    ports:
-      - "50051:50051"
-
   router:
     build: ./router
     container_name: translator-router
-    depends_on: [canary, riva-tts]
-    network_mode: "host"
+    depends_on: [canary]
+    network_mode: "host"              # talks to Riva on 127.0.0.1:50051
     devices:
       - "/dev/snd:/dev/snd"
+    volumes:
+      - "${HOME}/.asoundrc:/root/.asoundrc:ro"   # so friendly ALSA names work in container
     environment:
       - CANARY_URL=http://127.0.0.1:7000/ast
       - RIVA_ADDR=127.0.0.1:50051
@@ -48,8 +37,8 @@ services:
       - A_TGT=en
       - B_SRC=en
       - B_TGT=es
-      - RIVA_VOICE_A=en-US-Polyglot-1   # pick actual Riva EN voice
-      - RIVA_VOICE_B=es-ES-Polyglot-1   # pick actual Riva ES voice
+      - RIVA_VOICE_A=English-US.Female-1   # from your Riva voice list
+      - RIVA_VOICE_B=Spanish-US.Female-1   # from your Riva voice list
       - FRAME_MS=20
       - BURST_MIN_MS=300
       - BURST_MAX_MS=600
