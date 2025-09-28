@@ -1,4 +1,3 @@
-````markdown
 # Jetson Live Translator  
 **English ↔ Spanish real-time speech-to-speech translator**  
 Built on **NVIDIA Jetson Orin**, **Canary AST** (ASR + speech translation), and **NVIDIA Riva TTS**.
