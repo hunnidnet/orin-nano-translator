@@ -10,20 +10,21 @@ services:
       # - CANARY_MODEL_ID=nvidia/canary-1b-v2
     ports:
       - "7000:7000"
-
   router:
     build: ./router
     container_name: translator-router
     depends_on: [canary]
-    network_mode: "host"                  # talks to Riva QuickStart on 127.0.0.1:50051
+    network_mode: "host"
     devices:
       - "/dev/snd:/dev/snd"
+    privileged: true  # For testing
     volumes:
-      # mount your ALSA aliases so "headset0_in" etc. work inside the container
+      # Mount the ALSA configuration
       - "${HOME}/.asoundrc:/root/.asoundrc:ro"
     environment:
       - CANARY_URL=http://127.0.0.1:7000/ast
       - RIVA_ADDR=127.0.0.1:50051
+      # Use the named devices from .asoundrc
       - A_IN=headset0_in
       - A_OUT=headset0_out
       - B_IN=headset1_in
