@@ -1,71 +1,73 @@
-import os, io, time
-os.environ.setdefault("TRANSFORMERS_NO_TORCHVISION", "1")
+import os, io
 import numpy as np
 import soundfile as sf
-from fastapi import FastAPI, Body
+from fastapi import FastAPI
 from pydantic import BaseModel
-import torch
-import json
+from nemo.collections.asr.models import EncDecMultiTaskModel
+
+MODEL_ID = os.getenv("CANARY_MODEL_ID", "nvidia/canary-1b-flash")
+SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", "16000"))
 
 app = FastAPI()
-
-MODEL_ID = os.getenv("CANARY_MODEL_ID")  # e.g., "nvidia/canary-1b-v2"
-asr_translate = None
-fw_model = None  # faster-whisper fallback
-
-def load_model():
-    global asr_translate, fw_model
-    if MODEL_ID:
-        # Canary/HF pipeline (no torchvision)
-        from transformers import pipeline
-        asr_translate = pipeline(
-            task="automatic-speech-recognition",
-            model=MODEL_ID,
-            torch_dtype="float32",  # Jetson-friendly; can change to "float16" later
-        )
-        return
-
-    # Fallback: faster-whisper translate (no transformers / no torchvision)
-    from faster_whisper import WhisperModel
-    # small-medium balances speed/accuracy; adjust per your taste
-    fw_model = WhisperModel("small", device="cpu", compute_type="int8")
-    # or try: WhisperModel("medium", device="cuda", compute_type="float16") once CUDA works
+canary = None
 
 @app.on_event("startup")
 def _startup():
-    load_model()
+    global canary
+    # Load NeMo Canary 1B Flash (supports en/es/de/fr; ASR & AST)
+    canary = EncDecMultiTaskModel.from_pretrained(MODEL_ID)
+    # Greedy decoding for lowest latency
+    dec_cfg = canary.cfg.decoding
+    dec_cfg.beam.beam_size = 1
+    canary.change_decoding_strategy(dec_cfg)
 
-class AstIn(BaseModel):
+class ASTIn(BaseModel):
     pcm16_hex: str
-    sr: int
-    src_lang: str
-    tgt_lang: str
+    sr: int = 16000
+    src_lang: str = "es"  # 'en','es','de','fr'
+    tgt_lang: str = "en"
+    pnc: str = "yes"      # punctuation/casing: "yes" or "no"
 
 @app.post("/ast")
-def ast(inb: AstIn):
-    import numpy as np
-    pcm = bytes.fromhex(inb.pcm16_hex) if inb.pcm16_hex else b""
-    if not pcm:
-        return {"translation": ""}
+def ast(req: ASTIn):
+    # bytes -> float32 mono
+    pcm = np.frombuffer(bytes.fromhex(req.pcm16_hex), dtype=np.int16).astype(np.float32) / 32768.0
+    if req.sr != SAMPLE_RATE and len(pcm) > 0:
+        # quick resample via round-trip WAV in-memory
+        with io.BytesIO() as b:
+            sf.write(b, pcm, req.sr, format="WAV", subtype="PCM_16")
+            b.seek(0)
+            data, sr = sf.read(b)
+        with io.BytesIO() as b2:
+            sf.write(b2, data, SAMPLE_RATE, format="WAV", subtype="PCM_16")
+            b2.seek(0)
+            pcm, _ = sf.read(b2)
 
-    # int16 mono -> float32
-    import soundfile as sf
-    import io
-    # Write a fake WAV header in-memory so libs accept it easily
-    import wave
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(inb.sr)
-        w.writeframes(pcm)
-    buf.seek(0)
+    # write tiny temp wav (NeMo transcribe prefers file paths)
+    tmp = "/tmp/snippet.wav"
+    with open(tmp, "wb") as f:
+        sf.write(f, pcm, SAMPLE_RATE, format="WAV", subtype="PCM_16")
 
-    if asr_translate:
-        # HF pipeline (e.g., Canary multilingual)
-        out = asr_translate(buf, generate_kwargs={"task": "translate"})
-        text = out.get("text", "")
-        return {"translation": text}
+    src = req.src_lang.lower()
+    tgt = req.tgt_lang.lower()
+    pnc = req.pnc.lower() if req.pnc.lower() in ("yes", "no") else "yes"
 
-    # faster-whisper fallback with task="translate"
-    segments, info = fw_model.transcribe(buf, task="translate", language=None)  # auto-detect
-    text = " ".join(seg.text.strip() for seg in segments)
-    return {"translation": text}
+    # ASR if src==tgt; AST if src!=tgt
+    out = canary.transcribe(
+        [tmp],
+        batch_size=1,
+        pnc=pnc,
+        timestamps="no",
+        source_lang=src,
+        target_lang=tgt,
+    )
+
+    text = out[0].text if out and hasattr(out[0], "text") else ""
+    if src != tgt:
+        return {"transcript": "", "translation": text}
+    else:
+        return {"transcript": text, "translation": ""}
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "loaded": canary is not None, "model": MODEL_ID}
