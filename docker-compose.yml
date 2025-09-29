@@ -5,12 +5,16 @@ services:
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      - TRANSFORMERS_CACHE=/cache
-      - HF_HOME=/cache
-    volumes:
-      - ./model-cache:/cache
+      - CANARY_MODEL_ID=nvidia/canary-1b-flash
+      - SAMPLE_RATE=16000
     ports:
       - "7000:7000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+
 
   router:
     build: ./router
