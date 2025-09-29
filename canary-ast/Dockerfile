@@ -1,5 +1,5 @@
 # Jetson-friendly L4T base
-FROM nvcr.io/nvidia/l4t-ml:r36.2.0-py3  # or the closest R36.x tag available
+FROM nvcr.io/nvidia/l4t-ml:r36.2.0-py3  
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TRANSFORMERS_NO_TORCHVISION=1
