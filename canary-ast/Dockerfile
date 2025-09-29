@@ -12,7 +12,7 @@ ENV HF_HUB_DISABLE_SYMLINKS_WARNING=1
 RUN python3 -m pip install --no-cache-dir --upgrade pip \
  && python3 -m pip install --no-cache-dir \
     nemo_toolkit[asr]==2.0.0 \
-    huggingface_hub==0.23.4 \
+    huggingface_hub==0.24.5 \
     soundfile==0.12.1 \
     librosa==0.10.2.post1 \
     numba==0.59.1 \
