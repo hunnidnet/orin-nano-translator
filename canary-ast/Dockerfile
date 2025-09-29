@@ -1,22 +1,30 @@
-# Jetson-friendly L4T base
-FROM nvcr.io/nvidia/l4t-ml:r36.2.0-py3  
+# Jetson L4T base matching JetPack r36.x (adjust tag to your OS if needed)
+FROM nvcr.io/nvidia/l4t-ml:r36.3.0-py3
+# If you're on r36.4.x:  FROM nvcr.io/nvidia/l4t-ml:r36.4.0-py3
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV TRANSFORMERS_NO_TORCHVISION=1
-
+# Minimal runtime deps (no torchvision/transformers)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg python3-pip python3-dev build-essential portaudio19-dev \
+    libsndfile1 ffmpeg sox python3-pip python3-setuptools python3-wheel \
  && rm -rf /var/lib/apt/lists/*
 
+# Jetson-compatible pins
+ENV HF_HUB_DISABLE_SYMLINKS_WARNING=1
+# We don't install transformers here; NeMo will handle Canary Flash.
 RUN python3 -m pip install --no-cache-dir --upgrade pip \
- && python3 -m pip uninstall -y torchvision || true \
  && python3 -m pip install --no-cache-dir \
-      "transformers[audio]==4.42.4" "accelerate==0.33.0" \
-      "fastapi==0.110.0" "uvicorn[standard]==0.29.0" \
-      "soundfile==0.12.1" "webrtcvad==2.0.10" "numpy==1.26.4" \
-      "faster-whisper==1.0.3"
+    nemo_toolkit[asr]==2.0.0 \
+    huggingface_hub==0.23.4 \
+    soundfile==0.12.1 \
+    librosa==0.10.2.post1 \
+    numba==0.59.1 \
+    numpy==1.26.4 \
+    fastapi==0.111.0 \
+    uvicorn==0.30.0 \
+    requests==2.32.3
 
 WORKDIR /srv
-COPY server.py /srv/server.py
+COPY canary-ast/server.py /srv/server.py
+
 EXPOSE 7000
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "7000"]
