@@ -1,6 +1,4 @@
-# Jetson L4T base matching JetPack r36.x (adjust tag to your OS if needed)
-FROM nvcr.io/nvidia/l4t-ml:r36.3.0-py3
-# If you're on r36.4.x:  FROM nvcr.io/nvidia/l4t-ml:r36.4.0-py3
+FROM nvcr.io/nvidia/l4t-ml:r36.2.0-py3
 
 ENV DEBIAN_FRONTEND=noninteractive
 # Minimal runtime deps (no torchvision/transformers)
