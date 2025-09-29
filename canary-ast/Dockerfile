@@ -22,7 +22,7 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip \
     requests==2.32.3
 
 WORKDIR /srv
-COPY canary-ast/server.py /srv/server.py
+COPY server.py /srv/server.py
 
 EXPOSE 7000
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "7000"]
