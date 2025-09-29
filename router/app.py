@@ -23,10 +23,10 @@ BURST_MIN_MS = 500
 BURST_MAX_MS = 2000
 
 # Devices
-A_IN = os.getenv("A_IN", "hw:0,0")
-A_OUT = os.getenv("A_OUT", "hw:0,0")
-B_IN = os.getenv("B_IN", "hw:1,0")
-B_OUT = os.getenv("B_OUT", "hw:1,0")
+A_IN = os.getenv("A_IN", "plughw:0,0")
+A_OUT = os.getenv("A_OUT", "plughw:0,0")
+B_IN = os.getenv("B_IN", "plughw:1,0")
+B_OUT = os.getenv("B_OUT", "plughw:1,0")
 
 class TranslationPipeline:
     def __init__(self):
