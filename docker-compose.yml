@@ -13,52 +13,12 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       # Model sizes: tiny, base, small, medium, large-v3
-      - FW_MODEL=small
+      - FW_MODEL=tiny
       - FW_DEVICE=cuda
       - FW_COMPUTE_TYPE=float16
       - SAMPLE_RATE=16000
     ports:
       - "7001:7001"
-
-  # -----------------------------
-  # MT: CTranslate2 Marian EN<->ES (your converted models)
-  # -----------------------------
-  mt:
-    build: ./mt-server
-    container_name: mt-ct2
-    runtime: nvidia
-    ipc: host
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-    volumes:
-      # Mount your already-converted CT2 models + SPMs
-      - /home/translator/mt/ct2-en-es:/models/ct2-en-es:ro
-      - /home/translator/mt/ct2-es-en:/models/ct2-es-en:ro
-      - /home/translator/mt/opus-mt-en-es:/spm/opus-mt-en-es:ro
-      - /home/translator/mt/opus-mt-es-en:/spm/opus-mt-es-en:ro
-    ports:
-      - "7010:7010"
-
-  # -----------------------------
-  # Riva TTS Only
-  # If you already start Riva via quickstart, you can skip this block.
-  # Otherwise, run TTS here and point router at 127.0.0.1:50051
-  # -----------------------------
-  riva-tts:
-    image: nvcr.io/nvidia/riva/riva-speech:2.19.0-l4t-aarch64
-    container_name: riva-tts
-    runtime: nvidia
-    ipc: host
-    ulimits:
-      memlock: -1
-      stack: 67108864
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-    # Mount your local Riva model repo that already contains TTS models
-    volumes:
-      - ./riva/model_repository/models:/data/models:ro
-    ports:
-      - "50051:50051"
 
   # -----------------------------
   # Your router
@@ -68,8 +28,6 @@ services:
     container_name: translator-router
     depends_on:
       - asr
-      - mt
-      # - riva-tts   # only if you start Riva here
     network_mode: "host"
     devices:
       - "/dev/snd:/dev/snd"
