@@ -29,10 +29,10 @@ services:
     environment:
       - ASR_URL=http://127.0.0.1:7010
       - RIVA_ADDR=127.0.0.1:50051
-      - A_IN=headset0_in
-      - A_OUT=headset0_out
-      - B_IN=headset1_in
-      - B_OUT=headset1_out
+      - A_IN=plughw:0,0
+      - A_OUT=plughw:0,0
+      - B_IN=plughw:1,0
+      - B_OUT=plughw:1,0
       - A_SRC=es
       - A_TGT=en
       - B_SRC=en
