@@ -1,25 +1,76 @@
 services:
+  # -----------------------------
+  # OPTION A: ASR via Faster-Whisper (recommended)
+  # -----------------------------
   asr:
-    build: ./asr
-    container_name: asr-fw
+    build: ./asr-fastwhisper
+    container_name: asr-fastwhisper
     runtime: nvidia
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      - ASR_MODEL=small            # tiny/base/small/medium
-      - ASR_DEVICE=cuda
-      - ASR_COMPUTE_TYPE=int8_float16
+      # Model sizes: tiny, base, small, medium, large-v3
+      - FW_MODEL=small
+      - FW_DEVICE=cuda
+      - FW_COMPUTE_TYPE=float16
+      - SAMPLE_RATE=16000
+    ports:
+      - "7001:7001"
+
+  # -----------------------------
+  # MT: CTranslate2 Marian EN<->ES (your converted models)
+  # -----------------------------
+  mt:
+    build: ./mt-server
+    container_name: mt-ct2
+    runtime: nvidia
+    ipc: host
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      # Mount your already-converted CT2 models + SPMs
+      - /home/translator/mt/ct2-en-es:/models/ct2-en-es:ro
+      - /home/translator/mt/ct2-es-en:/models/ct2-es-en:ro
+      - /home/translator/mt/opus-mt-en-es:/spm/opus-mt-en-es:ro
+      - /home/translator/mt/opus-mt-es-en:/spm/opus-mt-es-en:ro
     ports:
       - "7010:7010"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu]
 
+  # -----------------------------
+  # Riva TTS Only
+  # If you already start Riva via quickstart, you can skip this block.
+  # Otherwise, run TTS here and point router at 127.0.0.1:50051
+  # -----------------------------
+  riva-tts:
+    image: nvcr.io/nvidia/riva/riva-speech:2.19.0-l4t-aarch64
+    container_name: riva-tts
+    runtime: nvidia
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    # Mount your local Riva model repo that already contains TTS models
+    volumes:
+      - ./riva/model_repository/models:/data/models:ro
+    command: ["/opt/riva/bin/riva_server", "--start_asr=false", "--start_nlp=false", "--start_tts=true"]
+    ports:
+      - "50051:50051"
+
+  # -----------------------------
+  # Your router
+  # -----------------------------
   router:
     build: ./router
     container_name: translator-router
-    depends_on: [asr]
+    depends_on:
+      - asr
+      - mt
+      # - riva-tts   # only if you start Riva here
     network_mode: "host"
     devices:
       - "/dev/snd:/dev/snd"
@@ -27,19 +78,23 @@ services:
     volumes:
       - "${HOME}/.asoundrc:/root/.asoundrc:ro"
     environment:
-      - ASR_URL=http://127.0.0.1:7010
+      # New endpoints
+      - ASR_URL=http://127.0.0.1:7001
+      - MT_URL=http://127.0.0.1:7010
       - RIVA_ADDR=127.0.0.1:50051
+
+      # Audio
       - A_IN=plughw:0,0
       - A_OUT=plughw:0,0
       - B_IN=plughw:1,0
       - B_OUT=plughw:1,0
-      - A_SRC=es
-      - A_TGT=en
-      - B_SRC=en
-      - B_TGT=es
-      - VOICE_EN=English-US.Male-Neutral
-      - VOICE_ES=Spanish-US.Female-1
+
+      # Router behavior
       - SAMPLE_RATE=16000
       - FRAME_MS=20
       - BURST_MIN_MS=300
       - BURST_MAX_MS=600
+
+      # Voices (match what /opt/riva/examples/talk.py --list-voices showed)
+      - VOICE_EN=English-US.Female-1
+      - VOICE_ES=Spanish-US.Female-1
