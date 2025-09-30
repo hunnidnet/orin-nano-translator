@@ -1,233 +1,158 @@
-# Jetson Live Translator  
-**English ↔ Spanish real-time speech-to-speech translator**  
-Built on **NVIDIA Jetson Orin**, **Canary AST** (ASR + speech translation), and **NVIDIA Riva TTS**.
+Jetson Live Translator
 
----
+English ↔ Spanish real-time speech-to-speech translator
+Built on NVIDIA Jetson Orin, Faster-Whisper (ASR), CTranslate2 Marian (MT), and NVIDIA Riva TTS.
 
-## ✨ Features
-* **Two modes**
-  1. **Local Mode** – Two headsets for in-person bilingual conversation (translation entirely on the Jetson).
-  2. **Jitsi Call Mode** – Jetson joins a self-hosted Jitsi Meet call and provides **real-time translation for a remote caller**.
+⸻
 
-* **Switchable**:
-  * **Physical switch** (USB button, GPIO, or simple push-button wired to a Jetson GPIO pin), **or**
-  * **Software toggle** via a small web dashboard.
+✨ Features
+	•	Two modes
+	1.	Local Mode – Two headsets for in-person bilingual conversation (translation entirely on the Jetson).
+	2.	Jitsi Call Mode – Jetson joins a self-hosted Jitsi Meet call and provides real-time translation for a remote caller.
+	•	Switchable: physical button (GPIO/USB) or web toggle.
+	•	Low-latency pipeline:
+	•	ASR: Faster-Whisper (CUDA, FP16)
+	•	MT: CTranslate2 Marian EN↔ES (CUDA, FP16)
+	•	TTS: Riva FastPitch + HiFiGAN (en-US / es-US)
 
-* **Low-latency pipeline**:
-  * **Canary-1B-v2 AST**: speech recognition + speech-to-text translation.
-  * **Riva TTS**: high-quality English & Spanish text-to-speech.
-  * Typical end-to-end delay: **~0.6–1.0 s** per phrase.
+⸻
 
----
+🛠️ Hardware
 
-## 🛠️ Hardware
-| Item | Purpose |
-|------|--------|
-| **NVIDIA Jetson Orin Nano 8 GB** | Core compute |
-| **2× USB audio headsets or 2× low-latency 2.4 GHz USB dongle headsets** | Mic + speaker for Local Mode |
-| **Polycom SoundStation2W (or any conference mic/speaker)** | Shared mic/speaker for Jitsi Call Mode |
-| **Physical toggle button (optional)** | Mode switch; any GPIO push button works |
-| **USB audio interface** | For Polycom 3.5 mm TRRS cable → Jetson |
+Item	Purpose
+NVIDIA Jetson Orin Nano 8 GB	Core compute
+2× USB audio headsets or 2× low-latency 2.4 GHz USB dongle headsets	Local Mode
+Conference mic/speaker (e.g., Polycom)	Shared device for calls
+Physical toggle button (optional)	Mode switch
+USB audio interface	For TRRS to Jetson
 
----
 
-## 📦 Software Stack
-* **JetPack 6.x** (CUDA 12.x)
-* **Docker + NVIDIA runtime**
-* **Canary-1B-v2 AST** – ASR + automatic speech translation (English ⇄ Spanish)
-* **NVIDIA Riva TTS** – streaming text-to-speech
-* **Python Router** – VAD, chunking, audio routing, and mode switching
-* **(Jitsi Mode)** Chromium or Jitsi Electron client for Jetson
+⸻
 
----
+📦 Software Stack
+	•	JetPack 6.x (CUDA 12.x)
+	•	Docker + NVIDIA runtime
+	•	ASR: Faster-Whisper microservice (Docker)
+	•	MT: CTranslate2 Marian (host systemd service)
+	•	TTS: NVIDIA Riva TTS (Docker or Quickstart)
+	•	Router: Python service (Docker) – VAD, chunking, routing
 
-## 🚀 Quick Start
+⸻
 
-### 1. Jetson Prep
-```bash
+🚀 Quick Start
+
+1) Jetson Prep
+
 sudo apt update && sudo apt install -y docker.io
 sudo usermod -aG docker $USER
 sudo apt install -y nvidia-container-toolkit
 sudo nvidia-ctk runtime configure
 sudo systemctl restart docker
-````
 
-### 2. Clone and Build
+2) Clone and Build
 
-```bash
 git clone https://github.com/<yourname>/jetson-live-translator.git
 cd jetson-live-translator
-docker compose build
-```
+docker compose build   # builds ASR + Router
 
-### 3. Download Riva Voices
+3) Riva TTS models
 
-Follow [Riva Quickstart](https://developer.nvidia.com/riva) to download at least:
+Follow the Riva Quickstart to deploy the TTS voices you want:
+	•	English (en-US)
+	•	Spanish (es-US)
+Ensure the Riva server exposes gRPC 50051.
 
-* `en-US` voice
-* `es-ES` voice
+4) MT (CTranslate2) models
 
-Place them in `riva/models/` and `riva/config/`.
+Download Marian models and convert with CTranslate2 on the Jetson:
 
-### 4. Start Services
+~/mt/
+├── opus-mt-en-es/ (Helsinki-NLP)
+├── opus-mt-es-en/ (Helsinki-NLP)
+├── ct2-en-es/     (converted)
+└── ct2-es-en/     (converted)
 
-```bash
-docker compose up
-```
+5) Install MT systemd service (autostarts on reboot)
 
-* `canary` – Canary AST server (HTTP)
-* `riva-tts` – NVIDIA Riva TTS server (gRPC)
-* `router` – translation + audio routing service
+Use the provided unit and env file:
 
----
+# create /etc/jetson-live-translator/mt-ct2.env and /etc/systemd/system/mt-ct2.service
+sudo systemctl daemon-reload
+sudo systemctl enable mt-ct2
+sudo systemctl start mt-ct2
+curl -s http://127.0.0.1:7010/health
 
-## 🎛 Mode Switching
+6) Start Docker services
 
-### Physical switch (recommended)
+docker compose up -d asr router   # riva-tts only if you don't already run quickstart
 
-1. Wire a simple **momentary push button** to a Jetson GPIO pin (e.g. `GPIO17`).
-2. The router monitors GPIO state:
+Endpoints used by the Router
+	•	ASR: http://127.0.0.1:7001/asr/chunk
+	•	MT:  http://127.0.0.1:7010/mt
+	•	TTS: 127.0.0.1:50051 (gRPC)
 
-   * **LOW** → Local Mode
-   * **HIGH** → Jitsi Call Mode
-3. Change pin number in `config.yaml`.
+⸻
 
-### Software switch (alternative)
+🎛 Mode Switching
+	•	Physical switch: GPIO input toggles router mode (edit pin in config).
+	•	Web toggle: Router exposes a simple dashboard on port 8080.
 
-* The router exposes a tiny **web dashboard** on port 8080:
+⸻
 
-  ```
-  http://<jetson-ip>:8080
-  ```
-* Click **Local** or **Jitsi** to toggle mode.
+🗂 Config (config.yaml)
 
----
-
-## 🗂 Config (`config.yaml`)
-
-```yaml
-mode: local        # 'local' or 'jitsi' at startup
+mode: local
 audio:
   sample_rate: 16000
   frame_ms: 20
   burst_ms_min: 300
   burst_ms_max: 600
 local_devices:
-  in_A: "hw:1,0"
-  out_B: "hw:2,0"
-  in_B: "hw:2,0"
-  out_A: "hw:1,0"
-jitsi_devices:
-  in: "hw:Polycom"
-  out: "hw:Polycom"
+  in_A: "plughw:0,0"
+  out_B: "plughw:1,0"
+  in_B: "plughw:1,0"
+  out_A: "plughw:0,0"
 languages:
   A_src: "es"
   A_tgt: "en"
   B_src: "en"
   B_tgt: "es"
 tts:
-  voice_A: "en-US-<riva-voice>"
-  voice_B: "es-ES-<riva-voice>"
-```
+  voice_en: "English-US.Female-1"
+  voice_es: "Spanish-US.Female-1"
 
----
 
-## 🧩 How the Two Modes Work
+⸻
 
-### Local Mode
+📊 Data Flow (Local Mode)
 
-```
-Headset A mic → Canary (es→en) → Riva TTS (en) → Headset B speaker
-Headset B mic → Canary (en→es) → Riva TTS (es) → Headset A speaker
-```
+Headset A mic → Faster-Whisper → (es text)
+               → CTranslate2 (es→en)
+               → Riva TTS (en)
+               → Headset B spk
 
-### Jitsi Call Mode
+Headset B mic → Faster-Whisper → (en text)
+               → CTranslate2 (en→es)
+               → Riva TTS (es)
+               → Headset A spk
 
-```
-Polycom mic → Jitsi client → Jetson router taps audio → Canary (es→en) → Riva TTS (en) → local speaker
-Local mic → Canary (en→es) → Riva TTS (es) → virtual mic (ALSA loopback) → Jitsi sends to parents
-```
 
-*ALSA `dsnoop`/`dmix` is used so Jitsi and the translator can share the same USB audio device.*
+⸻
 
----
+🧪 Health Checks
 
-## 📊 System Architecture
+curl -s http://127.0.0.1:7001/health  # ASR
+curl -s http://127.0.0.1:7010/health  # MT
+/opt/riva/examples/talk.py --server 127.0.0.1:50051 --list-voices  # Riva voices
 
-```plantuml
-@startuml
-title Dual-Jetson Live Translation with Jitsi
 
-skinparam componentStyle rectangle
-skinparam shadowing false
-skinparam defaultFontName Courier
+⸻
 
-rectangle "Colombia Site" as COLO {
-  node "Jetson (Colombia)" {
-    [Router + VAD]
-    [Canary AST (ES↔EN)]
-    [Riva TTS (Spanish voice)]
-    [Jitsi Client]
-  }
-  [Mic / Speaker] -down-> [Router + VAD]
-}
+🛠 Troubleshooting
+	•	MT won’t start: journalctl -u mt-ct2 -f and confirm paths in /etc/jetson-live-translator/mt-ct2.env.
+	•	No CUDA in CT2: Ensure you compiled CT2 with -DWITH_CUDA=ON -DCUDA_ARCH_LIST=8.7 and that /usr/local/lib is in LD_LIBRARY_PATH.
+	•	Router no audio: docker exec -it translator-router aplay -L to verify ALSA device names, and confirm they match env vars.
 
-rectangle "U.S. Site" as US {
-  node "Jetson (U.S.)" {
-    [Router + VAD] as U_ROUTER
-    [Canary AST (ES↔EN)] as U_CANARY
-    [Riva TTS (English voice)] as U_TTS
-    [Jitsi Client] as U_JITSI
-  }
-  [Mic / Speaker] -down-> U_ROUTER
-}
+⸻
 
-cloud "Internet" as NET
-node "Jitsi Server (SFU + Signaling)" as JITSI
-
-COLO --> NET
-US --> NET
-NET --> JITSI
-@enduml
-```
-
-Copy this block into [https://www.plantuml.com/plantuml](https://www.plantuml.com/plantuml) or a local PlantUML renderer to view the full system diagram.
-
----
-
-## 🏁 Usage
-
-* **Local conversation:** Flip the switch to **Local**. Two people wearing the headsets can talk with near-real-time EN↔ES translation entirely offline.
-* **Jitsi call:** Flip to **Jitsi**. Join the family call from the Jetson browser or Jitsi Electron client. Your parents in Colombia use the Jitsi app on their smartphone. The Jetson provides real-time EN↔ES translation both ways.
-
----
-
-## 🔧 Tips
-
-* Start with Canary greedy decoding and 300–600 ms VAD bursts for the best latency/accuracy balance.
-* Riva TTS supports **streaming synthesis**—enable it to begin speaking while text is still arriving.
-* If you hear echo on Jitsi calls, leave **Polycom Acoustic Clarity** enabled and keep Jitsi’s built-in echo cancellation on.
-
----
-
-## 📜 License
-
-MIT (or the license you prefer for your repository).
-
----
-
-### Acknowledgements
-
-* [NVIDIA Riva](https://developer.nvidia.com/riva)
-* [Canary multilingual AST](https://huggingface.co/nvidia)
-* [Polycom SoundStation2W](https://www.poly.com/)
-
-```
-
----
-
-This single README includes:
-* All setup and configuration instructions,
-* The dual-mode operating guide,
-* And a **PlantUML architecture diagram** that renders without the syntax errors you experienced with Mermaid.
-```
+If you want, I can also drop a minimal asr_server.py and router/app.py that already call these endpoints—you’ve got most of it, but I can line it up with your current env vars exactly.
