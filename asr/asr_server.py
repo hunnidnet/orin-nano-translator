@@ -1,36 +1,71 @@
-import os, io, time
+import os, io
 import numpy as np
 import soundfile as sf
 from fastapi import FastAPI
 from pydantic import BaseModel
 from faster_whisper import WhisperModel
 
-ASR_MODEL = os.getenv("ASR_MODEL", "small")  # tiny/base/small/medium
-DEVICE = os.getenv("ASR_DEVICE", "cuda")
-CTYPE  = os.getenv("ASR_COMPUTE_TYPE", "int8_float16")  # good on Jetson
+FW_MODEL = os.getenv("FW_MODEL", "small")           # tiny, base, small, medium, large-v3
+FW_DEVICE = os.getenv("FW_DEVICE", "cuda")          # "cuda" on Jetson
+FW_COMPUTE = os.getenv("FW_COMPUTE_TYPE", "float16")
+SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", "16000"))
 
-model = None
 app = FastAPI()
+model = None
 
 @app.on_event("startup")
-def _startup():
+def _load():
     global model
-    model = WhisperModel(ASR_MODEL, device=DEVICE, compute_type=CTYPE,
-                         cpu_threads=2, num_workers=1)
+    model = WhisperModel(FW_MODEL, device=FW_DEVICE, compute_type=FW_COMPUTE)
 
-class Chunk(BaseModel):
+class ASRIn(BaseModel):
     pcm16_hex: str
     sr: int = 16000
-    lang: str|None = None  # "en" or "es" or None for auto
+    lang: str | None = None  # e.g. "en", "es"; if None, auto-detect
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "model": FW_MODEL,
+        "device": FW_DEVICE,
+        "compute": FW_COMPUTE,
+        "sr": SAMPLE_RATE,
+        "loaded": model is not None,
+    }
 
 @app.post("/asr/chunk")
-def asr_chunk(req: Chunk):
-    pcm = np.frombuffer(bytes.fromhex(req.pcm16_hex), dtype=np.int16).astype(np.float32)/32768.0
-    # faster-whisper likes files; we’ll give it a small wav
-    with io.BytesIO() as b:
-        sf.write(b, pcm, req.sr, format="WAV", subtype="PCM_16")
-        b.seek(0)
-        segments, info = model.transcribe(b, language=req.lang, vad_filter=True, vad_parameters=dict(min_silence_duration_ms=150))
-    text = "".join([s.text for s in segments]).strip()
-    lang = info.language if info and info.language else (req.lang or "auto")
+def asr_chunk(req: ASRIn):
+    # Convert PCM16 mono bytes → float32
+    pcm = np.frombuffer(bytes.fromhex(req.pcm16_hex), dtype=np.int16).astype(np.float32) / 32768.0
+    if pcm.size == 0:
+        return {"text": "", "lang": req.lang or ""}
+
+    # Resample to 16k if needed (simple WAV roundtrip to keep deps light)
+    if req.sr != SAMPLE_RATE:
+        with io.BytesIO() as b:
+            sf.write(b, pcm, req.sr, format="WAV", subtype="PCM_16")
+            b.seek(0)
+            audio, sr = sf.read(b)
+        with io.BytesIO() as b2:
+            sf.write(b2, audio, SAMPLE_RATE, format="WAV", subtype="PCM_16")
+            b2.seek(0)
+            pcm, _ = sf.read(b2)
+
+    # faster-whisper accepts np.ndarray at 16k
+    language = req.lang  # None = auto
+    segments, info = model.transcribe(
+        pcm,
+        beam_size=1,
+        vad_filter=True,
+        language=language,
+        task="transcribe",    # text in the same language; you translate later in CT2
+        no_speech_threshold=0.6,
+        condition_on_previous_text=False,
+    )
+
+    text = "".join(seg.text for seg in segments).strip()
+    lang = language or (info.language if info is not None else "")
+    # normalize lang to 2 letters when possible
+    lang = (lang or "")[:2]
     return {"text": text, "lang": lang}
