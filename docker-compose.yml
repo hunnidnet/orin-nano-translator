@@ -1,8 +1,5 @@
 services:
-  # -----------------------------
-  # OPTION A: ASR via Faster-Whisper (recommended)
-  # -----------------------------
-  asr:
+  asr-fastwhisper:
     build: ./asr-fastwhisper
     container_name: asr-fastwhisper
     runtime: nvidia
