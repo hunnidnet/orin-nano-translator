@@ -1,7 +1,7 @@
 services:
-  asr-fastwhisper:
-    build: ./asr-fastwhisper
-    container_name: asr-fastwhisper
+  asr-trt:
+    build: ./asr-trt
+    container_name: asr-trt
     runtime: nvidia
     ipc: host
     ulimits:
@@ -9,21 +9,21 @@ services:
       stack: 67108864
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      - FW_MODEL=small           # tiny/base/small/medium/large-v3
-      - FW_DEVICE=cuda
-      - FW_COMPUTE_TYPE=float16
       - SAMPLE_RATE=16000
+      - MODEL_NAME=small
+      - ENGINE_DIR=/engines/small
+      - DEFAULT_LANG=           # leave empty to auto, or set "en"/"es"
+    volumes:
+      - /opt/whisper_trt/engines/small:/engines/small:ro
+      # If you need to import your repo directly:
+      # - /home/translator/whisper_trt:/opt/whisper_trt:ro
     ports:
       - "7001:7001"
 
-  # -----------------------------
-  # Your router
-  # -----------------------------
   router:
     build: ./router
     container_name: translator-router
-    depends_on:
-      - asr-fastwhisper
+    depends_on: [asr-trt]
     network_mode: "host"
     devices:
       - "/dev/snd:/dev/snd"
@@ -31,8 +31,11 @@ services:
     volumes:
       - "${HOME}/.asoundrc:/root/.asoundrc:ro"
     environment:
+      # ASR points to TRT shim
       - ASR_URL=http://127.0.0.1:7001
+      # MT points to your **local systemd** MT server (already on :7010)
       - MT_URL=http://127.0.0.1:7010
+      # Riva quickstart you already run (gRPC)
       - RIVA_ADDR=127.0.0.1:50051
 
       # Audio
@@ -47,6 +50,6 @@ services:
       - BURST_MIN_MS=300
       - BURST_MAX_MS=600
 
-      # Voices (match what /opt/riva/examples/talk.py --list-voices showed)
+      # Voices (match your Riva list)
       - VOICE_EN=English-US.Female-1
       - VOICE_ES=Spanish-US.Female-1
