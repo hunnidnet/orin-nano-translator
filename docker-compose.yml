@@ -12,8 +12,7 @@ services:
       stack: 67108864
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      # Model sizes: tiny, base, small, medium, large-v3
-      - FW_MODEL=tiny
+      - FW_MODEL=small           # tiny/base/small/medium/large-v3
       - FW_DEVICE=cuda
       - FW_COMPUTE_TYPE=float16
       - SAMPLE_RATE=16000
@@ -35,7 +34,6 @@ services:
     volumes:
       - "${HOME}/.asoundrc:/root/.asoundrc:ro"
     environment:
-      # New endpoints
       - ASR_URL=http://127.0.0.1:7001
       - MT_URL=http://127.0.0.1:7010
       - RIVA_ADDR=127.0.0.1:50051
