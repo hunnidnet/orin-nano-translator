@@ -23,7 +23,7 @@ services:
     build: ./router
     container_name: translator-router
     depends_on:
-      - asr
+      - asr-fastwhisper
     network_mode: "host"
     devices:
       - "/dev/snd:/dev/snd"
