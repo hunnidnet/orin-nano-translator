@@ -7,20 +7,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # copy your locally built CUDA-enabled CTranslate2 wheel
 # IMPORTANT: this wheel must be in the build context (project root)
-COPY ctranslate2-4.6.0-cp310-cp310-linux_aarch64.whl /tmp/ctranslate2.whl
+COPY ctranslate2-4.6.0-cp310-cp310-linux_aarch64.whl /tmp/ctranslate2-4.6.0-cp310-cp310-linux_aarch64.whl
 
-# install deps in the right order:
-# 1) your CT2 CUDA wheel (replaces any CPU-only CT2)
-# 2) faster-whisper + web shim
+# install in one shot (no uninstall/reinstall needed)
 RUN python3 -m pip install --no-cache-dir --upgrade pip && \
-    python3 -m pip install --no-cache-dir /tmp/ctranslate2.whl && \
-    python3 -m pip uninstall -y ctranslate2 || true && \
-    python3 -m pip install --no-cache-dir /tmp/ctranslate2.whl && \
+    python3 -m pip install --no-cache-dir /tmp/ctranslate2-4.6.0-cp310-cp310-linux_aarch64.whl && \
     python3 -m pip install --no-cache-dir \
-      faster-whisper==1.0.0 \
-      fastapi==0.111.0 \
-      uvicorn==0.30.0 \
-      soundfile==0.12.1
+        faster-whisper==1.0.0 \
+        fastapi==0.111.0 \
+        uvicorn==0.30.0 \
+        soundfile==0.12.1
 
 WORKDIR /srv
 COPY server.py /srv/server.py
