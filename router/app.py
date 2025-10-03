@@ -1,4 +1,4 @@
-# app.py  — Router using Riva streaming ASR + local MT + Riva TTS
+# app.py — Router using Riva streaming ASR + local MT + Riva TTS
 
 import os
 import time
@@ -15,12 +15,9 @@ from riva.client.proto import riva_asr_pb2 as rasr
 # =========================
 # ENUM / COMPAT SHIMS
 # =========================
-# Audio encoding enum changed names across releases. Normalize to an int.
+# Audio encoding enum name can differ by version; normalize to an int.
 _EncEnum = getattr(rasr, "AudioEncoding", None) or getattr(rasr, "RivaAudioEncoding", None)
 LINEAR_PCM = getattr(_EncEnum, "LINEAR_PCM", 1) if _EncEnum else 1
-
-# Some releases put sample rate as sample_rate_hz, others expect it omitted for streaming.
-# We’ll try with and without; see riva_asr_streaming_recognize().
 
 
 # =========================
@@ -41,7 +38,7 @@ A_TGT = os.getenv("A_TGT", "en")
 B_SRC = os.getenv("B_SRC", "en")
 B_TGT = os.getenv("B_TGT", "es")
 
-# Riva TTS voices (check with: docker exec riva-speech /opt/riva/clients/riva_tts_client --list_voices --riva_uri=localhost:50051)
+# Riva TTS voices (use riva_tts_client --list_voices to verify)
 VOICE_EN = os.getenv("VOICE_EN", "English-US.Female-1")
 VOICE_ES = os.getenv("VOICE_ES", "Spanish-US.Female-1")
 
@@ -86,7 +83,7 @@ _riva_tts  = SpeechSynthesisService(_riva_auth)
 
 
 def _lang2_to_riva(code2: str) -> str:
-    """Map 'en'->'en-US', 'es'->'es-US'. Default 'en-US'."""
+    """Map 'en'->'en-US', 'es'->'es-US' (default 'en-US')."""
     if not code2:
         return "en-US"
     return "es-US" if code2.lower().startswith("es") else "en-US"
@@ -94,39 +91,48 @@ def _lang2_to_riva(code2: str) -> str:
 
 def _make_streaming_config(lang_code: str):
     """
-    Build a StreamingRecognitionConfig that works across Riva minor versions.
-    We try to set sample_rate_hz in the inner RecognitionConfig; if that
-    field is not present in your installed proto, we fall back without it.
+    Build a StreamingRecognitionConfig that’s compatible across Riva minor versions.
+    We avoid fields that may be absent on your proto (e.g., enable_word_time_offsets).
+    Also, sample_rate_hz is added to RecognitionConfig only if supported.
     """
-    # base config (no sample rate yet)
+    # Base RecognitionConfig
     base_cfg = rasr.RecognitionConfig(
         encoding=LINEAR_PCM,
         language_code=lang_code,
         max_alternatives=1,
-        enable_automatic_punctuation=True,
         audio_channel_count=1,
+        enable_automatic_punctuation=True,
         verbatim_transcripts=False,
     )
 
-    # Try adding sample_rate_hz if the field exists in this build
+    # Try to add sample_rate_hz if the field exists in this build
     try:
-        # hasattr on protobufs returns False for unknown fields; set in try/except
         cfg_with_sr = rasr.RecognitionConfig()
         cfg_with_sr.CopyFrom(base_cfg)
         setattr(cfg_with_sr, "sample_rate_hz", SAMPLE_RATE)
-        # Touch to force serialization (will raise if unknown)
-        _ = cfg_with_sr.SerializeToString()
+        _ = cfg_with_sr.SerializeToString()  # triggers if unknown field
         use_cfg = cfg_with_sr
     except Exception:
-        use_cfg = base_cfg  # fall back
+        use_cfg = base_cfg
 
-    return rasr.StreamingRecognitionConfig(
-        config=use_cfg,
-        interim_results=False,
-        enable_word_time_offsets=False,
-        max_alternatives=1,
-        single_utterance=False,  # we send one burst, but keep API generic
-    )
+    # Construct StreamingRecognitionConfig with only widely-supported fields
+    # Try a few variants from most to least specific.
+    candidates = [
+        dict(config=use_cfg, interim_results=False, max_alternatives=1, single_utterance=False),
+        dict(config=use_cfg, interim_results=False, max_alternatives=1),
+        dict(config=use_cfg, interim_results=False),
+        dict(config=use_cfg),
+    ]
+    for kwargs in candidates:
+        try:
+            s = rasr.StreamingRecognitionConfig(**kwargs)
+            _ = s.SerializeToString()  # validate fields exist
+            return s
+        except Exception:
+            continue
+
+    # Worst-case fallback (should not happen)
+    return rasr.StreamingRecognitionConfig(config=use_cfg)
 
 
 def riva_asr_streaming_recognize(pcm_bytes: bytes, lang_hint_2letter: str | None) -> str:
@@ -137,13 +143,11 @@ def riva_asr_streaming_recognize(pcm_bytes: bytes, lang_hint_2letter: str | None
     lang_code = _lang2_to_riva(lang_hint_2letter or "en")
     stream_cfg = _make_streaming_config(lang_code)
 
-    # Riva client expects an iterator of bytes chunks (20ms frames are fine)
+    # Iterator of bytes chunks (20ms frames)
     chunk = FRAME_SIZE * SAMPLE_BYTES
     audio_chunks = [pcm_bytes[i:i + chunk] for i in range(0, len(pcm_bytes), chunk)]
 
-    # Newer clients accept (audio_chunks, streaming_config=...)
-    # Older ones take positional args only. Try both signatures.
-    responses = None
+    # Handle older/newer client signatures
     try:
         responses = _riva_asr.streaming_response_generator(audio_chunks, streaming_config=stream_cfg)
     except TypeError:
@@ -152,11 +156,10 @@ def riva_asr_streaming_recognize(pcm_bytes: bytes, lang_hint_2letter: str | None
     final_text = ""
     try:
         for resp in responses:
-            # Collect only finalized results
             if not resp or not resp.results:
                 continue
             for res in resp.results:
-                if res.is_final and res.alternatives:
+                if getattr(res, "is_final", False) and res.alternatives:
                     final_text = (res.alternatives[0].transcript or "").strip()
         return final_text
     except Exception as e:
@@ -192,18 +195,12 @@ def riva_tts_speak(text: str, tgt_lang2: str) -> bytes:
 # =========================
 # MT (local HTTP service)
 # =========================
-# Your MT endpoint expects: {"text": "...", "source_lang": "en", "target_lang": "es"}
-
+# Expects: {"text": "...", "source_lang": "en", "target_lang": "es"}
 def mt_translate(text: str, src2: str, tgt2: str) -> str:
     text = (text or "").strip()
     if not text or src2 == tgt2:
         return text
-
-    payload = {
-        "text": text,
-        "source_lang": src2,
-        "target_lang": tgt2,
-    }
+    payload = {"text": text, "source_lang": src2, "target_lang": tgt2}
     try:
         r = requests.post(MT_ENDPOINT, json=payload, timeout=10)
         r.raise_for_status()
@@ -219,7 +216,7 @@ def mt_translate(text: str, src2: str, tgt2: str) -> str:
 # =========================
 def capture_burst(device_name: str, vad: webrtcvad.Vad) -> bytes:
     """
-    Capture FRAME_MS frames and emit a burst of ~BURST_MIN..BURST_MAX ms when speech ends.
+    Capture frames and emit a burst of ~BURST_MIN..BURST_MAX ms when speech ends.
     """
     cap = open_capture(device_name)
     buf = b""
