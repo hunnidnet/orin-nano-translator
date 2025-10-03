@@ -18,18 +18,11 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip && \
         uvicorn==0.30.0 \
         soundfile==0.12.1
         
-# Make the CTranslate2 shared library discoverable by the dynamic linker
-# We detect the actual site-packages path and register CT2's libs/ with ldconfig
 RUN set -eux; \
-  CT2_LIBDIR="$(python3 - <<'PY'
-import ctranslate2, pathlib
-print(str(pathlib.Path(ctranslate2.__file__).parent / "libs"))
-PY
-  )"; \
+  CT2_LIBDIR="$(python3 -c "import ctranslate2, pathlib; print(pathlib.Path(ctranslate2.__file__).parent / 'libs')")"; \
   echo "CT2 libs at: ${CT2_LIBDIR}"; \
   echo "${CT2_LIBDIR}" > /etc/ld.so.conf.d/ctranslate2.conf; \
   ldconfig; \
-  # quick sanity: list and try to resolve dependencies (non-fatal if ldd not perfect)
   ls -l "${CT2_LIBDIR}"; \
   ldd "${CT2_LIBDIR}"/libctranslate2.so* || true
     
