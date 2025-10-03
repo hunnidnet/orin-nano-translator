@@ -1,24 +1,33 @@
-# Jetson-friendly base (CUDA/cuDNN/TRT come from JetPack host)
+# Jetson-friendly ML base with CUDA/TensorRT + PyTorch preinstalled
 FROM nvcr.io/nvidia/l4t-ml:r36.2.0-py3
 
-ENV DEBIAN_FRONTEND=noninteractive
+# System deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3-pip python3-dev build-essential libsndfile1 ffmpeg sox \
- && rm -rf /var/lib/apt/lists/*
+    ffmpeg libsndfile1 python3-pip && \
+    rm -rf /var/lib/apt/lists/*
 
-# Python deps for the shim server
-RUN python3 -m pip install --no-cache-dir \
-    fastapi==0.111.0 uvicorn==0.30.0 numpy==1.26.4 soundfile==0.12.1
+# Python deps:
+# - openai-whisper provides tokenizer/audio utils whisper_trt imports
+# - whisper_trt builds/uses TensorRT engines (no PyTorch at runtime)
+# - FastAPI/uvicorn for a tiny HTTP shim
+RUN python3 -m pip install --no-cache-dir --upgrade pip && \
+    python3 -m pip install --no-cache-dir \
+      openai-whisper==20231117 \
+      whisper_trt \
+      fastapi==0.111.0 \
+      uvicorn==0.30.0 \
+      numpy==1.26.4 \
+      soundfile==0.12.1
 
-# --- whisper_trt itself ---
-# You already cloned it earlier; if not, mount it or pip install your fork.
-# Here we assume you will mount the engines and the repo into the container.
-# If your repo has a setup.py/pyproject, you can pip install it instead.
-python3 -m pip install /opt/whisper_trt
-
+# App
 WORKDIR /srv
-COPY server_trt_shim.py /srv/server.py
+COPY server.py /srv/server.py
 
-# Expose the shim API on 7001
+# Engine/model config (override via compose if you want)
+ENV TRT_MODEL_SIZE=small \
+    TRT_COMPUTE=int8 \
+    SAMPLE_RATE=16000 \
+    CACHE_DIR=/cache
+
 EXPOSE 7001
-CMD ["python3", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "7001"]
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "7001"]
