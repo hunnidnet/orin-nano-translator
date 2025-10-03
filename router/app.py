@@ -5,11 +5,23 @@ import requests
 import webrtcvad
 import alsaaudio
 
-import numpy as np  # only used for simple sanity ops if needed
-
 # ----- Riva client (2.19.0) -----
 from riva.client import Auth, ASRService, SpeechSynthesisService
-from riva.client.proto.riva_asr_pb2 import RecognitionConfig, AudioEncoding
+from riva.client.proto import riva_asr_pb2 as rasr  # use module, not direct names
+
+# =========================
+# ENUM/CONFIG COMPAT SHIM
+# =========================
+# Some Riva client versions export the encoding enum as AudioEncoding,
+# others as RivaAudioEncoding. We normalize here.
+_EncEnum = getattr(rasr, "AudioEncoding", None) or getattr(rasr, "RivaAudioEncoding", None)
+if _EncEnum is None:
+    # Fallback: LINEAR_PCM is 1 in current schemas; keep safe default
+    LINEAR_PCM = 1
+else:
+    LINEAR_PCM = getattr(_EncEnum, "LINEAR_PCM", 1)
+
+RecognitionConfig = rasr.RecognitionConfig
 
 # =========================
 # ENV / CONFIG
@@ -23,22 +35,22 @@ A_OUT = os.getenv("A_OUT", "plughw:0,0")  # Speaker A earphone/speaker
 B_IN  = os.getenv("B_IN", "plughw:1,0")   # Speaker B mic
 B_OUT = os.getenv("B_OUT", "plughw:1,0")  # Speaker B earphone/speaker
 
-# Language directions per side ("en" or "es" are enough; we'll map to en-US / es-US for Riva)
+# Language per side (2-letter: 'en' / 'es')
 A_SRC = os.getenv("A_SRC", "es")
 A_TGT = os.getenv("A_TGT", "en")
 B_SRC = os.getenv("B_SRC", "en")
 B_TGT = os.getenv("B_TGT", "es")
 
-# Riva TTS voices (use riva_tts_client --list_voices to confirm)
+# Riva TTS voices (check with riva_tts_client --list_voices)
 VOICE_EN = os.getenv("VOICE_EN", "English-US.Female-1")
 VOICE_ES = os.getenv("VOICE_ES", "Spanish-US.Female-1")
 
 # Audio pipeline
 SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", "16000"))  # 16 kHz mono PCM16
-FRAME_MS    = int(os.getenv("FRAME_MS", "20"))        # VAD frame size ms (10/20/30 supported)
-BURST_MIN   = int(os.getenv("BURST_MIN_MS", "300"))   # minimum voiced ms to emit a burst
-BURST_MAX   = int(os.getenv("BURST_MAX_MS", "600"))   # max burst length before forced emit
-VAD_LEVEL   = int(os.getenv("VAD_LEVEL", "2"))        # 0..3 (aggressiveness)
+FRAME_MS    = int(os.getenv("FRAME_MS", "20"))        # 10/20/30ms supported by WebRTC VAD
+BURST_MIN   = int(os.getenv("BURST_MIN_MS", "300"))   # min voiced duration before emit
+BURST_MAX   = int(os.getenv("BURST_MAX_MS", "600"))   # max burst size before forced emit
+VAD_LEVEL   = int(os.getenv("VAD_LEVEL", "2"))        # 0..3 (more = more aggressive)
 
 CHANNELS     = 1
 SAMPLE_BYTES = 2
@@ -48,7 +60,6 @@ FRAME_SIZE   = int(SAMPLE_RATE * FRAME_MS / 1000)     # samples per frame
 # ALSA HELPERS
 # =========================
 def open_capture(device_name: str):
-    # pyalsaaudio API flags are deprecated positional; keep for compatibility
     pcm = alsaaudio.PCM(type=alsaaudio.PCM_CAPTURE, mode=alsaaudio.PCM_NORMAL, device=device_name)
     pcm.setchannels(CHANNELS)
     pcm.setrate(SAMPLE_RATE)
@@ -71,23 +82,22 @@ _riva_auth = Auth(uri=RIVA_ADDR)
 _riva_asr  = ASRService(_riva_auth)
 _riva_tts  = SpeechSynthesisService(_riva_auth)
 
-def _lang_code_2letter_to_riva(code2: str) -> str:
-    """'en' -> 'en-US', 'es' -> 'es-US'. Default to en-US."""
+def _lang2_to_riva(code2: str) -> str:
+    """Map 'en'->'en-US', 'es'->'es-US'. Default 'en-US'."""
     if not code2:
         return "en-US"
     code2 = code2.lower()
-    if code2.startswith("es"):
-        return "es-US"
-    return "en-US"
+    return "es-US" if code2.startswith("es") else "en-US"
 
 def riva_asr_offline_recognize(pcm_bytes: bytes, lang_hint_2letter: str | None) -> str:
     """
-    Recognize a single burst of PCM16 (16kHz mono) using Riva offline ASR.
-    Returns best transcript or "".
+    Recognize one burst of PCM16 (16kHz mono) using Riva OFFLINE ASR.
+    Returns the top transcript (string) or "".
     """
-    lang_code = _lang_code_2letter_to_riva(lang_hint_2letter or "en")
+    lang_code = _lang2_to_riva(lang_hint_2letter or "en")
+
     cfg = RecognitionConfig(
-        encoding=AudioEncoding.LINEAR_PCM,
+        encoding=LINEAR_PCM,
         sample_rate_hz=SAMPLE_RATE,
         language_code=lang_code,
         max_alternatives=1,
@@ -105,11 +115,10 @@ def riva_asr_offline_recognize(pcm_bytes: bytes, lang_hint_2letter: str | None) 
 
     for res in result.results:
         if res.alternatives:
-            return res.alternatives[0].transcript.strip()
-
+            return (res.alternatives[0].transcript or "").strip()
     return ""
 
-def riva_tts_speak(text: str, tgt_lang_2letter: str) -> bytes:
+def riva_tts_speak(text: str, tgt_lang2: str) -> bytes:
     """
     Synthesize PCM16 mono via Riva TTS at SAMPLE_RATE.
     """
@@ -117,7 +126,7 @@ def riva_tts_speak(text: str, tgt_lang_2letter: str) -> bytes:
     if not text:
         return b""
 
-    lang_code = _lang_code_2letter_to_riva(tgt_lang_2letter)
+    lang_code = _lang2_to_riva(tgt_lang2)
     voice = VOICE_EN if lang_code.startswith("en") else VOICE_ES
 
     try:
@@ -136,25 +145,23 @@ def riva_tts_speak(text: str, tgt_lang_2letter: str) -> bytes:
 # =========================
 # MT (local HTTP service)
 # =========================
-def mt_translate(text: str, src_2: str, tgt_2: str) -> str:
+def mt_translate(text: str, src2: str, tgt2: str) -> str:
     """
-    Calls your local MT FastAPI server: POST {MT_URL}/translate
-      body: {"text": "...", "source": "en", "target": "es"}
-      returns: {"text": "..."} or {"translation":"..."} depending on your implementation
+    POST {MT_URL}/translate  JSON: {"text": "...", "source": "en", "target": "es"}
+    Accepts either {"text": "..."} or {"translation": "..."} in response.
     """
     text = (text or "").strip()
-    if not text or src_2 == tgt_2:
+    if not text or src2 == tgt2:
         return text
 
     try:
         r = requests.post(
             f"{MT_URL}/translate",
-            json={"text": text, "source": src_2, "target": tgt_2},
+            json={"text": text, "source": src2, "target": tgt2},
             timeout=10,
         )
         r.raise_for_status()
         data = r.json()
-        # accept either {"text": "..."} or {"translation": "..."}
         return (data.get("text") or data.get("translation") or "").strip()
     except Exception as e:
         print(f"[MT] translate error: {e}")
@@ -178,11 +185,9 @@ def capture_burst(device_name: str, vad: webrtcvad.Vad) -> bytes:
         if length <= 0:
             continue
 
-        is_speech = False
         try:
             is_speech = vad.is_speech(data, SAMPLE_RATE)
         except Exception:
-            # if frame size drifts, drop it
             is_speech = False
 
         if is_speech:
@@ -195,13 +200,11 @@ def capture_burst(device_name: str, vad: webrtcvad.Vad) -> bytes:
                 return burst
         else:
             if speaking:
-                # speech just ended
                 if len(buf) >= min_bytes:
                     burst = buf
                     buf = b""
                     cap.close()
                     return burst
-                # too short -> reset
                 buf = b""
                 speaking = False
 
@@ -220,13 +223,12 @@ def play_pcm(device_name: str, pcm: bytes):
 # =========================
 # MAIN DIRECTION LOOP
 # =========================
-def direction_loop(name: str, in_dev: str, out_dev: str, src_lang_2: str, tgt_lang_2: str):
+def direction_loop(name: str, in_dev: str, out_dev: str, src2: str, tgt2: str):
     """
-    One direction:
+    Direction:
       mic(in_dev) -> VAD burst -> Riva ASR (src) -> MT (src->tgt) -> Riva TTS (tgt) -> speaker(out_dev)
-    src_lang_2/tgt_lang_2: 'en' or 'es'
     """
-    print(f"[{name}] {in_dev} ({src_lang_2})->({tgt_lang_2}) {out_dev}")
+    print(f"[{name}] {in_dev} ({src2})->({tgt2}) {out_dev}")
     vad = webrtcvad.Vad(VAD_LEVEL)
 
     while True:
@@ -234,16 +236,16 @@ def direction_loop(name: str, in_dev: str, out_dev: str, src_lang_2: str, tgt_la
         if not burst:
             continue
 
-        # 1) ASR (Riva offline) — we pass a language hint per side
-        text_src = riva_asr_offline_recognize(burst, src_lang_2)
+        # 1) ASR (Riva offline)
+        text_src = riva_asr_offline_recognize(burst, src2)
         if not text_src:
             continue
 
         # 2) MT if needed
-        out_text = text_src if src_lang_2 == tgt_lang_2 else mt_translate(text_src, src_lang_2, tgt_lang_2)
+        out_text = text_src if src2 == tgt2 else mt_translate(text_src, src2, tgt2)
 
         # 3) TTS in target language
-        pcm_tts = riva_tts_speak(out_text, tgt_lang_2)
+        pcm_tts = riva_tts_speak(out_text, tgt2)
         play_pcm(out_dev, pcm_tts)
 
 # =========================
