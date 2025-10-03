@@ -9,12 +9,12 @@ services:
       stack: 67108864
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      - TRT_MODEL_SIZE=small          # tiny/base/small/medium
-      - TRT_COMPUTE=int8              # int8 or fp16
+      - TRT_MODEL_SIZE=small
+      - TRT_COMPUTE=int8
       - SAMPLE_RATE=16000
       - CACHE_DIR=/cache
     volumes:
-      - ./asr-cache:/cache            # persist TRT engine
+      - ./asr-cache:/cache        # <-- persist TRT engine
     ports:
       - "7001:7001"
 
@@ -30,23 +30,19 @@ services:
     volumes:
       - "${HOME}/.asoundrc:/root/.asoundrc:ro"
     environment:
-      # point to the services you already have running locally
       - ASR_URL=http://127.0.0.1:7001
-      - MT_URL=http://127.0.0.1:7010
-      - RIVA_ADDR=127.0.0.1:50051
+      - MT_URL=http://127.0.0.1:7010      # your local CT2 MT service
+      - RIVA_ADDR=127.0.0.1:50051         # your running Riva TTS
 
-      # Audio devices
       - A_IN=plughw:0,0
       - A_OUT=plughw:0,0
       - B_IN=plughw:1,0
       - B_OUT=plughw:1,0
 
-      # Router behavior
       - SAMPLE_RATE=16000
       - FRAME_MS=20
       - BURST_MIN_MS=300
       - BURST_MAX_MS=600
 
-      # Voices (match your Riva voices)
       - VOICE_EN=English-US.Female-1
       - VOICE_ES=Spanish-US.Female-1
