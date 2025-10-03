@@ -19,8 +19,17 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip && \
         soundfile==0.12.1
         
 RUN set -eux; \
-  CT2_LIBDIR="$(python3 -c "import ctranslate2, pathlib; print(pathlib.Path(ctranslate2.__file__).parent / 'libs')")"; \
+  CT2_LIBDIR="$(python3 -c "import site, pathlib; \
+paths=list(site.getsitepackages()); \
+try: paths.append(site.getusersitepackages()) \
+except Exception: pass; \
+libdir=''; \
+for p in paths: \
+    cand = pathlib.Path(p)/'ctranslate2'/'libs'; \
+    if cand.exists(): libdir=str(cand); \
+print(libdir)")"; \
   echo "CT2 libs at: ${CT2_LIBDIR}"; \
+  [ -n "${CT2_LIBDIR}" ]; \
   echo "${CT2_LIBDIR}" > /etc/ld.so.conf.d/ctranslate2.conf; \
   ldconfig; \
   ls -l "${CT2_LIBDIR}"; \
