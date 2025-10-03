@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # copy your locally built CUDA-enabled CTranslate2 wheel
 # IMPORTANT: this wheel must be in the build context (project root)
-COPY ../ctranslate2-4.6.0-cp310-cp310-linux_aarch64.whl /tmp/ctranslate2.whl
+COPY ctranslate2-4.6.0-cp310-cp310-linux_aarch64.whl /tmp/ctranslate2.whl
 
 # install deps in the right order:
 # 1) your CT2 CUDA wheel (replaces any CPU-only CT2)
