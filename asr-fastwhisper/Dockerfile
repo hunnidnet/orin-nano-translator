@@ -17,7 +17,20 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip && \
         fastapi==0.111.0 \
         uvicorn==0.30.0 \
         soundfile==0.12.1
-
+        
+# Make the bundled CTranslate2 shared lib discoverable by the loader
+# The wheel ships it under .../dist-packages/ctranslate2/libs/
+RUN set -eux; \
+    py_site=$(python3 - <<'PY'
+import site
+for p in site.getsitepackages():
+    if 'dist-packages' in p and p.startswith('/usr/local'):
+        print(p); break
+PY
+    ); \
+    echo "Python site-packages: ${py_site}"; \
+    cp -v "${py_site}/ctranslate2/libs/libctranslate2.so."* /usr/lib/aarch64-linux-gnu/
+    
 WORKDIR /srv
 COPY server.py /srv/server.py
 
