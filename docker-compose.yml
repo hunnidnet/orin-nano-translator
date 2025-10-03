@@ -9,21 +9,20 @@ services:
       stack: 67108864
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+      - TRT_MODEL_SIZE=small          # tiny/base/small/medium
+      - TRT_COMPUTE=int8              # int8 or fp16
       - SAMPLE_RATE=16000
-      - MODEL_NAME=small
-      - ENGINE_DIR=/engines/small
-      - DEFAULT_LANG=           # leave empty to auto, or set "en"/"es"
+      - CACHE_DIR=/cache
     volumes:
-      - /opt/whisper_trt/engines/small:/engines/small:ro
-      # If you need to import your repo directly:
-      # - /home/translator/whisper_trt:/opt/whisper_trt:ro
+      - ./asr-cache:/cache            # persist TRT engine
     ports:
       - "7001:7001"
 
   router:
     build: ./router
     container_name: translator-router
-    depends_on: [asr-trt]
+    depends_on:
+      - asr-trt
     network_mode: "host"
     devices:
       - "/dev/snd:/dev/snd"
@@ -31,14 +30,12 @@ services:
     volumes:
       - "${HOME}/.asoundrc:/root/.asoundrc:ro"
     environment:
-      # ASR points to TRT shim
+      # point to the services you already have running locally
       - ASR_URL=http://127.0.0.1:7001
-      # MT points to your **local systemd** MT server (already on :7010)
       - MT_URL=http://127.0.0.1:7010
-      # Riva quickstart you already run (gRPC)
       - RIVA_ADDR=127.0.0.1:50051
 
-      # Audio
+      # Audio devices
       - A_IN=plughw:0,0
       - A_OUT=plughw:0,0
       - B_IN=plughw:1,0
@@ -50,6 +47,6 @@ services:
       - BURST_MIN_MS=300
       - BURST_MAX_MS=600
 
-      # Voices (match your Riva list)
+      # Voices (match your Riva voices)
       - VOICE_EN=English-US.Female-1
       - VOICE_ES=Spanish-US.Female-1
