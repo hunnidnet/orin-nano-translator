@@ -27,7 +27,7 @@ RecognitionConfig = rasr.RecognitionConfig
 # ENV / CONFIG
 # =========================
 RIVA_ADDR = os.getenv("RIVA_ADDR", "127.0.0.1:50051")
-MT_URL    = os.getenv("MT_URL", "http://127.0.0.1:7010")  # FastAPI MT service base
+MT_ENDPOINT = os.getenv("MT_ENDPOINT", "http://127.0.0.1:7010/mt")
 
 # Audio device names
 A_IN  = os.getenv("A_IN", "plughw:0,0")   # Speaker A mic
@@ -142,29 +142,37 @@ def riva_tts_speak(text: str, tgt_lang2: str) -> bytes:
         print(f"[Riva TTS] synth error: {e}")
         return b""
 
+
 # =========================
 # MT (local HTTP service)
 # =========================
+# Endpoint accepts: {"text": "...", "source_lang": "en", "target_lang": "es"}
+
 def mt_translate(text: str, src2: str, tgt2: str) -> str:
     """
-    POST {MT_URL}/translate  JSON: {"text": "...", "source": "en", "target": "es"}
-    Accepts either {"text": "..."} or {"translation": "..."} in response.
+    Calls your local MT endpoint:
+      POST {MT_ENDPOINT}
+      JSON: {"text": "...", "source_lang": "en", "target_lang": "es"}
+    Returns either {"text": "..."} or {"translation": "..."}.
     """
     text = (text or "").strip()
     if not text or src2 == tgt2:
         return text
 
+    payload = {
+        "text": text,
+        "source_lang": src2,   # <-- note the key name
+        "target_lang": tgt2,   # <-- note the key name
+    }
+
     try:
-        r = requests.post(
-            f"{MT_URL}/translate",
-            json={"text": text, "source": src2, "target": tgt2},
-            timeout=10,
-        )
+        r = requests.post(MT_ENDPOINT, json=payload, timeout=10)
         r.raise_for_status()
         data = r.json()
+        # accept either field name
         return (data.get("text") or data.get("translation") or "").strip()
     except Exception as e:
-        print(f"[MT] translate error: {e}")
+        print(f"[MT] translate error: {e} | payload={payload}")
         return text  # graceful fallback
 
 # =========================
