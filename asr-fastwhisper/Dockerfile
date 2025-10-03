@@ -18,18 +18,20 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip && \
         uvicorn==0.30.0 \
         soundfile==0.12.1
         
-# Make the bundled CTranslate2 shared lib discoverable by the loader
-# The wheel ships it under .../dist-packages/ctranslate2/libs/
+# Make the CTranslate2 shared library discoverable by the dynamic linker
+# We detect the actual site-packages path and register CT2's libs/ with ldconfig
 RUN set -eux; \
-    py_site=$(python3 - <<'PY'
-import site
-for p in site.getsitepackages():
-    if 'dist-packages' in p and p.startswith('/usr/local'):
-        print(p); break
+  CT2_LIBDIR="$(python3 - <<'PY'
+import ctranslate2, pathlib
+print(str(pathlib.Path(ctranslate2.__file__).parent / "libs"))
 PY
-    ); \
-    echo "Python site-packages: ${py_site}"; \
-    cp -v "${py_site}/ctranslate2/libs/libctranslate2.so."* /usr/lib/aarch64-linux-gnu/
+  )"; \
+  echo "CT2 libs at: ${CT2_LIBDIR}"; \
+  echo "${CT2_LIBDIR}" > /etc/ld.so.conf.d/ctranslate2.conf; \
+  ldconfig; \
+  # quick sanity: list and try to resolve dependencies (non-fatal if ldd not perfect)
+  ls -l "${CT2_LIBDIR}"; \
+  ldd "${CT2_LIBDIR}"/libctranslate2.so* || true
     
 WORKDIR /srv
 COPY server.py /srv/server.py
